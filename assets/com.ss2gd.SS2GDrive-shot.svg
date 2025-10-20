@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>SS2GDrive Shot</title>
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#93C5FD"/>
+      <stop offset="100%" stop-color="#A7F3D0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景 -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="url(#bg2)"/>
+
+  <!-- 選択枠（フレンドリーなティール系） -->
+  <rect x="26" y="38" width="76" height="60" rx="12"
+        fill="none" stroke="#0EA5E9" stroke-width="6" stroke-dasharray="12 8" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- レンズのアクセント -->
+  <circle cx="64" cy="68" r="12" fill="#93C5FD" opacity="0.55"/>
+  <circle cx="69" cy="62" r="3.6" fill="#FFFFFF" opacity="0.85"/>
+
+  <!-- アップロード矢印（必ず目に入る明るいグリーン＋白縁） -->
+  <path d="M64 48 V24" stroke="#22C55E" stroke-width="10" stroke-linecap="round" fill="none"/>
+  <path d="M64 48 V24" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.85"/>
+  <polygon points="64,14 52,30 76,30" fill="#22C55E"/>
+  <polygon points="64,14 52,30 76,30" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.85"/>
+</svg>
+

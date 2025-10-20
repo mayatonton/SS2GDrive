@@ -1,0 +1,39 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+
+# --- Virtualenv ---
+.venv/
+venv/
+.Python
+
+# --- Editors/IDE ---
+.vscode/
+.idea/
+
+# --- Logs ---
+*.log
+
+# --- Flatpak / Builder outputs ---
+build-dir/
+.flatpak-builder/
+repo/
+*.flatpak
+*.Debug
+
+# --- OAuth / Secrets (念のため) ---
+client_secret.json
+**/client_secret.json
+credentials.json
+token.json
+*.token.json
+
+# --- Misc ---
+.DS_Store

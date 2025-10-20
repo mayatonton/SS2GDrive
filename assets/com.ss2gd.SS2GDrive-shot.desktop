@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SS2GDrive Shot
+Comment=Snap a region and upload to Google Drive
+Exec=ss2gd shot
+Icon=com.ss2gd.SS2GDrive-shot
+Terminal=false
+Categories=Graphics;Utility;
