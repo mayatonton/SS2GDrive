@@ -8,9 +8,10 @@
     "--share=network",
     "--socket=wayland",
     "--socket=fallback-x11",
+    "--socket=pulseaudio",
     "--device=dri",
     "--talk-name=org.freedesktop.portal.Desktop",
-    "--filesystem=xdg-config/ss2gd:create",
+    "--filesystem=xdg-config/ss2gdrive:create",
     "--filesystem=xdg-download",
     "--filesystem=xdg-videos"
   ],

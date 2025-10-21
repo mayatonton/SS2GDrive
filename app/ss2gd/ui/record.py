@@ -8,10 +8,11 @@ from PySide6.QtWidgets import (
     QPushButton, QMessageBox
 )
 from PySide6.QtGui import QDesktopServices, QIcon
-from PySide6.QtCore import QTimer, QUrl, QObject, Signal, Slot, Qt
+from PySide6.QtCore import QTimer, QUrl, QObject, Signal, Slot, Qt, QRect
 
 from ..region_select import select_rect
 from ..recorder import start_recording, stop_recording
+from .overlay_rect import RectHintOverlayManager
 
 # keep_clipboard_alive が無い環境でも落ちないようフォールバック
 try:
@@ -78,7 +79,11 @@ class RecordWindow(QWidget):
         self.timer.setInterval(500)
         self.timer.timeout.connect(self._tick)
 
+        # 起動時に矩形選択
         QTimer.singleShot(150, self.on_select)
+
+        # 選択領域の可視化（常時表示用オーバーレイ）
+        self._hint = RectHintOverlayManager()
 
     # -------- helpers ----------
     def _set_status(self, text:str) -> None:
@@ -132,6 +137,9 @@ class RecordWindow(QWidget):
             self._rect = tuple(int(v) for v in r)
             self._update_rect_label()
             self._set_status("Region selected")
+            # 画面に枠を常時表示（録画前＝非録画色）
+            x, y, w, h = self._rect
+            self._hint.show_rect(QRect(x, y, w, h), recording=self._is_recording)
         except Exception as e:
             self._rect = None
             self._update_rect_label()
@@ -161,6 +169,10 @@ class RecordWindow(QWidget):
                     QMessageBox.critical(self, "SS2GDrive", f"Start failed:\n{err}")
                 else:
                     self._set_status("Recording…")
+                    # 録画中は赤系に切替
+                    if self._rect:
+                        x, y, w, h = self._rect
+                        self._hint.show_rect(QRect(x, y, w, h), recording=True)
             self._invoker.call_signal.emit(finish)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -169,7 +181,7 @@ class RecordWindow(QWidget):
         if not self._is_recording:
             return
 
-        # ← ここを“即時 UI 切替”に変更（録画はバックグラウンドで停止・アップロード）
+        # 即時 UI 切替（録画停止・アップロードはバックグラウンド）
         self._set_status("Uploading…")
         self.timer.stop()
         self._is_recording = False
@@ -186,7 +198,7 @@ class RecordWindow(QWidget):
                 err = str(e)
 
             def finish():
-                # アップロード完了時に UI を戻す
+                # UI を戻す
                 self.btn_select.setEnabled(True)
                 self.btn_start.setEnabled(True)
                 self.btn_stop.setEnabled(False)
@@ -197,6 +209,9 @@ class RecordWindow(QWidget):
                     return
 
                 self._set_status("Uploaded")
+                # 録画終了なので枠を消す
+                self._hint.hide()
+
                 if link:
                     try:
                         copy_to_clipboard(link); _keep_clipboard_alive(2000)
@@ -212,6 +227,14 @@ class RecordWindow(QWidget):
             self._invoker.call_signal.emit(finish)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def closeEvent(self, ev):
+        """ウィンドウ終了時の後片付け"""
+        try:
+            self._hint.close()
+        except Exception:
+            pass
+        super().closeEvent(ev)
 
 def run_window():
     app = QApplication.instance() or QApplication(sys.argv)

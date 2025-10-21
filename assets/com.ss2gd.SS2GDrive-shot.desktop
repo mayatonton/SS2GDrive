@@ -6,3 +6,4 @@ Exec=ss2gd shot
 Icon=com.ss2gd.SS2GDrive-shot
 Terminal=false
 Categories=Graphics;Utility;
+X-Flatpak=com.ss2gd.SS2GDrive

@@ -2,9 +2,8 @@
 Type=Application
 Name=SS2GDrive
 Comment=Tray for Snap & Upload to Google Drive (fallback window if tray is unavailable)
-Exec=ss2gd tray --window
+Exec=ss2gd tray
 Icon=com.ss2gd.SS2GDrive
 Terminal=false
 Categories=Graphics;Utility;
-StartupWMClass=SS2GDrive
-X-GNOME-Autostart-enabled=true
+X-Flatpak=com.ss2gd.SS2GDrive
