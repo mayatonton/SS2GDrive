@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SS2GDrive Record
+Comment=Record a region and upload to Google Drive
+Exec=/usr/bin/flatpak run --branch=master --arch=x86_64 --command=ss2gd com.ss2gd.SS2GDrive record-ui
+Icon=com.ss2gd.SS2GDrive
+Terminal=false
+Categories=Graphics;Utility;
+X-Flatpak=com.ss2gd.SS2GDrive
+StartupWMClass=SS2GDrive-Record

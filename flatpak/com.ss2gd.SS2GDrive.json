@@ -5,63 +5,45 @@
   "sdk": "org.kde.Sdk",
   "command": "ss2gd",
   "finish-args": [
-    "--socket=wayland",
-    "--socket=x11",
-    "--device=dri",
     "--share=network",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
     "--talk-name=org.freedesktop.portal.Desktop",
-    "--filesystem=xdg-config/SS2GDrive:create",
-    "--env=QT_QPA_PLATFORM=xcb",
-    "--env=QT_ENABLE_HIGHDPI_SCALING=1"
+    "--filesystem=xdg-config/ss2gd:create",
+    "--filesystem=xdg-download",
+    "--filesystem=xdg-videos"
   ],
   "modules": [
     {
       "name": "ss2gdrive",
       "buildsystem": "simple",
       "build-options": {
-        "build-args": [
-          "--share=network"
-        ],
-        "env": {
-          "PIP_DISABLE_PIP_VERSION_CHECK": "1",
-          "PIP_NO_CACHE_DIR": "1"
-        }
+        "build-args": ["--share=network"]
       },
       "build-commands": [
         "pip3 install --no-cache-dir --prefix=/app -r requirements.txt",
-        "pip3 install --no-cache-dir --prefix=/app ./app",
+        "pip3 install --no-cache-dir --force-reinstall --no-deps --prefix=/app ./app",
         "install -Dm644 com.ss2gd.SS2GDrive.desktop /app/share/applications/com.ss2gd.SS2GDrive.desktop",
         "install -Dm644 com.ss2gd.SS2GDrive-shot.desktop /app/share/applications/com.ss2gd.SS2GDrive-shot.desktop",
         "install -Dm644 com.ss2gd.SS2GDrive.svg /app/share/icons/hicolor/scalable/apps/com.ss2gd.SS2GDrive.svg",
-        "install -Dm644 com.ss2gd.SS2GDrive-shot.svg /app/share/icons/hicolor/scalable/apps/com.ss2gd.SS2GDrive-shot.svg"
+        "install -Dm644 com.ss2gd.SS2GDrive-shot.svg /app/share/icons/hicolor/scalable/apps/com.ss2gd.SS2GDrive-shot.svg",
+        "install -Dm644 com.ss2gd.SS2GDrive-record.desktop /app/share/applications/com.ss2gd.SS2GDrive-record.desktop",
+        "install -Dm644 com.ss2gd.SS2GDrive-record.svg /app/share/icons/hicolor/scalable/apps/com.ss2gd.SS2GDrive-record.svg"
       ],
       "sources": [
-        {
-          "type": "dir",
-          "path": "../app",
-          "dest": "app"
-        },
-        {
-          "type": "file",
-          "path": "../assets/com.ss2gd.SS2GDrive.desktop"
-        },
-        {
-          "type": "file",
-          "path": "../assets/com.ss2gd.SS2GDrive-shot.desktop"
-        },
-        {
-          "type": "file",
-          "path": "../assets/com.ss2gd.SS2GDrive.svg"
-        },
-        {
-          "type": "file",
-          "path": "../assets/com.ss2gd.SS2GDrive-shot.svg"
-        },
         {
           "type": "inline",
           "dest-filename": "requirements.txt",
           "contents": "google-api-python-client>=2.149.0\ngoogle-auth>=2.35.0\ngoogle-auth-oauthlib>=1.2.1\ndbus-next>=0.2.3\nPySide6>=6.7.2\n"
-        }
+        },
+        { "type": "dir",  "path": "../app", "dest": "app" },
+        { "type": "file", "path": "../assets/com.ss2gd.SS2GDrive.desktop" },
+        { "type": "file", "path": "../assets/com.ss2gd.SS2GDrive-shot.desktop" },
+        { "type": "file", "path": "../assets/com.ss2gd.SS2GDrive.svg" },
+        { "type": "file", "path": "../assets/com.ss2gd.SS2GDrive-shot.svg" },
+        { "type": "file", "path": "../assets/com.ss2gd.SS2GDrive-record.desktop" },
+        { "type": "file", "path": "../assets/com.ss2gd.SS2GDrive-record.svg" }
       ]
     }
   ]

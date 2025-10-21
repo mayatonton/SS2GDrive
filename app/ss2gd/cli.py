@@ -1,61 +1,121 @@
-import argparse, asyncio, os, signal, sys, webbrowser
-from .screenshot_portal import take_interactive_screenshot
+# app/ss2gd/cli.py
+import os, sys, argparse, webbrowser
+
+from .screenshot_portal import take_interactive_screenshot, PortalError
 from .drive_uploader import upload_and_share, sign_in
-from .clipboard import copy_to_clipboard, _flush_clipboard
-from .config import load_settings, PID_PATH
+from .clipboard import copy_to_clipboard, keep_clipboard_alive
 
-def cmd_auth():
-    ok = sign_in(interactive=True); print("Signed in" if ok else "Not authorized")
+def _debug(msg: str):
+    if os.environ.get("SS2GD_DEBUG"):
+        print(f"[cli] {msg}", flush=True)
 
-def cmd_quit():
-    if not os.path.exists(PID_PATH):
-        print("No tray pidfile; tray may not be running"); return 1
-    try:
-        with open(PID_PATH,"r") as f: pid=int(f.read().strip())
-        os.kill(pid, signal.SIGTERM); print(f"Sent SIGTERM to tray (pid {pid})"); return 0
-    except Exception as e:
-        print(f"Failed to quit tray: {e}"); return 1
+# ---- commands ----
 
 def cmd_shot():
-    import traceback, os
-    os.environ.setdefault("SS2GD_DEBUG","1")
-    print("[cli] take_interactive_screenshot()", flush=True)
-    path = asyncio.run(take_interactive_screenshot())
-    copy_to_clipboard("Uploading to Google Drive…")
+    """矩形スクショ → Drive アップロード → クリップボード & ブラウザ"""
+    _debug("take_interactive_screenshot()")
     try:
-        st=load_settings()
-        mime = "image/jpeg" if (st.get("image_format")=="jpeg") else "image/png"
-        print(f"[cli] uploading {path} as {mime}", flush=True)
-        link = upload_and_share(path, mime_type=mime)
-        copy_to_clipboard(link); print(link, flush=True); _flush_clipboard(1200)
-        try: webbrowser.open(link)
-        except Exception: pass
-    except Exception as e:
-        copy_to_clipboard(f"Upload failed: {e}"); _flush_clipboard(1200)
-        traceback.print_exc(); sys.exit(1)
-    finally:
-        try: os.remove(path)
-        except Exception: pass
+        # ここは同期関数（asyncio.run不要）
+        path = take_interactive_screenshot()
+    except PortalError as e:
+        print(f"Screenshot failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # 拡張子からMIME推定（設定ダイアログのformatとも整合）
+    mime = "image/png"
+    if path.lower().endswith((".jpg", ".jpeg")):
+        mime = "image/jpeg"
+
+    link = upload_and_share(path, mime, os.path.basename(path))
+
+    # クリップボード（失敗しても続行）
+    try:
+        copy_to_clipboard(link)
+        keep_clipboard_alive(1500)
+    except Exception:
+        pass
+
+    # 必ずブラウザも開く
+    try:
+        webbrowser.open(link)
+    except Exception:
+        pass
+
+    print(link)
+
+def cmd_auth():
+    """Googleサインイン（必要なら）"""
+    sign_in(interactive=True)
+    print("Signed in")
 
 def cmd_settings():
-    from .ui.settings import SettingsDialog
+    """設定ダイアログを単体表示"""
     from PySide6.QtWidgets import QApplication
-    app=QApplication.instance() or QApplication(sys.argv)
-    SettingsDialog().exec()
+    from .ui.settings import SettingsDialog
+    app = QApplication.instance() or QApplication(sys.argv)
+    dlg = SettingsDialog()
+    dlg.exec()
 
-def cmd_tray(force_window: bool = False):
+def cmd_tray(args):
+    """トレイ（フォールバック小ウィンドウあり）"""
     from .ui.tray import TrayApp
-    TrayApp(force_window=force_window).run()
+    app = TrayApp(force_window=getattr(args, "window", False))
+    app.run()
+
+def cmd_record(args):
+    """矩形録画 → WebM保存 → Driveにアップロード → クリップボード & ブラウザ"""
+    from .record_region import record_region_to_file, upload_recorded_file
+    dur = int(getattr(args, "duration", 5))
+    fps = int(getattr(args, "fps", 30))
+    _debug(f"record duration={dur}s fps={fps}")
+
+    path = record_region_to_file(duration_sec=dur, framerate=fps)
+    link = upload_recorded_file(path)
+
+    try:
+        copy_to_clipboard(link)
+        keep_clipboard_alive(1500)
+    except Exception:
+        pass
+    try:
+        webbrowser.open(link)
+    except Exception:
+        pass
+    print(link)
+
+def cmd_record_ui(_args):
+    """Start/Stop ができる録画専用UIを起動（起動直後に矩形選択）"""
+    from .ui.record import run_window
+    run_window()
+
+# ---- entrypoint ----
 
 def main():
-    ap=argparse.ArgumentParser(prog="ss2gd")
-    sub=ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("auth"); sub.add_parser("shot")
-    p_tray=sub.add_parser("tray"); p_tray.add_argument("--window", action="store_true")
-    sub.add_parser("settings"); sub.add_parser("quit")
-    a=ap.parse_args()
-    if a.cmd=="auth": cmd_auth()
-    elif a.cmd=="shot": cmd_shot()
-    elif a.cmd=="tray": cmd_tray(force_window=getattr(a,"window",False))
-    elif a.cmd=="settings": cmd_settings()
-    elif a.cmd=="quit": sys.exit(cmd_quit())
+    p = argparse.ArgumentParser(prog="ss2gd")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("shot")
+    sub.add_parser("auth")
+    sub.add_parser("settings")
+
+    p_tray = sub.add_parser("tray")
+    p_tray.add_argument("--window", action="store_true", help="tray不可環境で小ウィンドウを強制")
+
+    p_rec = sub.add_parser("record")
+    p_rec.add_argument("--duration", type=int, default=5)
+    p_rec.add_argument("--fps", type=int, default=30)
+
+    # ★ 追加: 録画UI
+    sub.add_parser("record-ui")
+
+    a = p.parse_args()
+
+    if a.cmd == "shot":     return cmd_shot()
+    if a.cmd == "auth":     return cmd_auth()
+    if a.cmd == "settings": return cmd_settings()
+    if a.cmd == "tray":     return cmd_tray(a)
+    if a.cmd == "record":   return cmd_record(a)
+    if a.cmd == "record-ui":return cmd_record_ui(a)
+
+if __name__ == "__main__":
+    main()

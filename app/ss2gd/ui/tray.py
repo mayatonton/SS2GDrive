@@ -137,7 +137,7 @@ class TrayApp:
             link = None; err = None
             try:
                 _dbg("take_interactive_screenshot() start")
-                path = asyncio.run(take_interactive_screenshot())
+                path = take_interactive_screenshot()
                 _dbg(f"screenshot path: {path!r}")
                 if not path or not os.path.exists(path):
                     raise RuntimeError("Screenshot canceled or not saved")

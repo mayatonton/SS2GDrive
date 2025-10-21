@@ -1,11 +1,29 @@
-import sys
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon
-from PySide6.QtGui import QIcon
-_tray=None
-def _ensure_tray():
-    global _tray
-    app=QApplication.instance() or QApplication(sys.argv)
-    if _tray is None: _tray=QSystemTrayIcon(QIcon.fromTheme("camera-photo")); _tray.show()
-    return _tray
-def notify(summary:str, body:str=""):
-    _ensure_tray().showMessage(summary, body)
+# app/ss2gd/notify.py
+from __future__ import annotations
+import shutil, subprocess, sys
+
+def notify(*args):
+    """
+    notify("Message") あるいは notify("Title", "Message")
+    スレッド安全：Qtは使わない。notify-send があれば使い、無ければstderrへ。
+    """
+    if len(args) == 1:
+        title, body = "SS2GDrive", str(args[0])
+    elif len(args) >= 2:
+        title, body = (str(args[0]) or "SS2GDrive"), str(args[1])
+    else:
+        return
+
+    exe = shutil.which("notify-send")
+    if exe:
+        try:
+            subprocess.run([exe, title, body], check=False)
+            return
+        except Exception:
+            pass
+
+    # フォールバック（通知コマンドが無い環境）
+    try:
+        print(f"[notify] {title}: {body}", file=sys.stderr, flush=True)
+    except Exception:
+        pass
