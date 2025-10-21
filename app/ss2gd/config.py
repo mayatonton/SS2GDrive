@@ -1,33 +1,69 @@
+# app/ss2gd/config.py
+from __future__ import annotations
 import os, json
+from pathlib import Path
+
 APP_ID = "com.ss2gd.SS2GDrive"
-_DEF = {"publish_anyone": True, "upload_folder_id": None, "image_format": "png", "jpeg_quality": 90, "open_in_browser": True}
-def config_dir():
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    path = os.path.join(base, "SS2GDrive"); os.makedirs(path, exist_ok=True); return path
-CLIENT_SECRET_PATH = os.path.join(config_dir(), "client_secret.json")
-TOKEN_PATH = os.path.join(config_dir(), "token.json")
-SETTINGS_PATH = os.path.join(config_dir(), "settings.json")
-PID_PATH = os.path.join(config_dir(), "tray.pid")
-EMBEDDED_CLIENT_PATH = os.path.join(os.path.dirname(__file__), "embedded_client.json")
-def load_settings()->dict:
-    d=_DEF.copy()
+
+def _config_root() -> Path:
+    """
+    Flatpak では XDG_CONFIG_HOME が
+      ~/.var/app/com.ss2gd.SS2GDrive/config
+    に設定される。無ければ通常の ~/.config を使う。
+    """
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return Path(xdg)
+    # 念のため Flatpak の既定パスも見る
+    flatpak_cfg = Path.home() / ".var/app" / APP_ID / "config"
+    return flatpak_cfg if flatpak_cfg.exists() else (Path.home() / ".config")
+
+CFG_DIR = _config_root() / "ss2gdrive"
+CFG_DIR.mkdir(parents=True, exist_ok=True)
+
+SETTINGS_PATH      = CFG_DIR / "settings.json"
+CLIENT_SECRET_PATH = CFG_DIR / "client_secret.json"
+TOKEN_PATH         = CFG_DIR / "token.json"
+
+def load_settings() -> dict:
     try:
-        if os.path.exists(SETTINGS_PATH):
-            with open(SETTINGS_PATH,"r",encoding="utf-8") as f: d.update(json.load(f))
-    except Exception: pass
-    return d
-def save_settings(v:dict):
-    d=_DEF.copy(); d.update(v)
-    with open(SETTINGS_PATH,"w",encoding="utf-8") as f: json.dump(d,f,ensure_ascii=False,indent=2)
-def load_embedded_client_config():
-    cid=os.environ.get("SS2GD_CLIENT_ID"); cs=os.environ.get("SS2GD_CLIENT_SECRET")
-    if cid and cs:
-        return {"installed":{"client_id":cid,"client_secret":cs,"redirect_uris":["http://localhost","http://localhost:8080/","http://localhost:8090/"],"auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token"}}
-    if os.path.exists(EMBEDDED_CLIENT_PATH):
-        try:
-            import json as _json
-            with open(EMBEDDED_CLIENT_PATH,"r",encoding="utf-8") as f:
-                data=_json.load(f)
-                if isinstance(data,dict) and ("installed" in data or "web" in data): return data
-        except Exception: pass
+        if SETTINGS_PATH.exists():
+            return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def save_settings(d: dict) -> None:
+    CFG_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = SETTINGS_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, SETTINGS_PATH)
+
+def ensure_videos_dir() -> str:
+    p = Path.home() / "Videos" / "SS2GDrive"
+    p.mkdir(parents=True, exist_ok=True)
+    return str(p)
+
+def load_embedded_client_config() -> dict | None:
+    """
+    将来的に Flatpak にクライアント JSON を同梱する場合用。
+    今は None を返して通常パスを使わせる。
+    """
     return None
+
+# ---- ScreenCast restore token helpers ----
+
+def get_screencast_restore_token() -> str | None:
+    """保存済みの ScreenCast restore_token（無ければ None）"""
+    try:
+        st = load_settings()
+        tok = st.get("screencast_restore_token")
+        return tok if isinstance(tok, str) and tok else None
+    except Exception:
+        return None
+
+def set_screencast_restore_token(token: str) -> None:
+    """必要なら手動で更新（通常はポータル応答で自動保存される）"""
+    st = load_settings()
+    st["screencast_restore_token"] = token
+    save_settings(st)

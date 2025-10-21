@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SS2GDrive Record
+Comment=Record a region and upload to Google Drive
+Exec=ss2gd record-ui
+Icon=com.ss2gd.SS2GDrive-record
+Terminal=false
+Categories=Graphics;Utility;
+X-Flatpak=com.ss2gd.SS2GDrive
