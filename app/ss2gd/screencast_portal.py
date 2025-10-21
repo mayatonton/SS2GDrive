@@ -1,7 +1,7 @@
 # app/ss2gd/screencast_portal.py
 from __future__ import annotations
 import os, asyncio, uuid
-from typing import Any, Dict, List, Tuple, Sequence
+from typing import Any, Dict, List, Tuple, Sequence, Optional
 from dbus_next.aio import MessageBus
 from dbus_next import Message, MessageType, Variant
 
@@ -13,10 +13,10 @@ IF_DBUS  = "org.freedesktop.DBus"
 
 DEBUG = bool(os.environ.get("SS2GD_DEBUG"))
 
-def _v(x):  # 単層 Variant を剥がす
+def _v(x):
     return x.value if isinstance(x, Variant) else x
 
-def _deep_unvariant(x):  # 深い Variant も Python 素の型へ
+def _deep_unvariant(x):
     if isinstance(x, Variant):
         return _deep_unvariant(x.value)
     if isinstance(x, dict):
@@ -68,11 +68,13 @@ async def _wait_request_response(bus: MessageBus, handle: str, timeout: float = 
             pass
 
 async def _call_with_handle(bus: MessageBus, interface: str, member: str, signature: str, body: list, timeout: float = 60.0):
+    if DEBUG:
+        print(f"[portal] call {interface.split('.')[-1]}.{member} ({signature})")
     msg = Message(destination=PORTAL, path=OBJ, interface=interface, member=member, signature=signature, body=body)
     reply = await asyncio.wait_for(bus.call(msg), timeout=timeout)
     if reply.message_type != MessageType.METHOD_RETURN:
         raise RuntimeError(f"Portal call failed: {reply.error_name}")
-    handle = reply.body[0]  # object path (Request)
+    handle = reply.body[0]
     if DEBUG:
         print(f"[portal] request handle: {handle}")
     code, results = await _wait_request_response(bus, handle, timeout=timeout)
@@ -80,23 +82,17 @@ async def _call_with_handle(bus: MessageBus, interface: str, member: str, signat
         raise RuntimeError(f"Portal returned error code {code}")
     return results
 
-async def start_screencast_session(multiple: bool = True, cursor_mode: int = 2) -> Tuple[int, List[Dict[str, Any]], str]:
-    """
-    Returns: (pipewire_fd, streams, session_path)
-      - pipewire_fd: int (dup() 済み FD。呼び出し側で close してOK)
-      - streams: [{'node_id': int, 'object_path': str|None, 'position': (x,y)|None, 'size': (w,h)|None, 'source_type': int|None }, ...]
-      - session_path: '/org/freedesktop/portal/desktop/session/...'
-    """
-    # ★ 重要: UNIX FD の交渉を有効化
+async def start_screencast_session(
+    multiple: bool = True,
+    cursor_mode: int = 2,
+    restore_token: Optional[str] = None,
+) -> Tuple[int, List[Dict[str, Any]], str]:
     bus = await MessageBus(negotiate_unix_fd=True).connect()
-
-    # Request 応答シグナルを確実に受け取る
     await _add_match(bus, "type='signal',sender='org.freedesktop.portal.Desktop',interface='org.freedesktop.portal.Request'")
 
-    # ---- CreateSession ----
+    # CreateSession
     tok  = f"ss2gd_{uuid.uuid4().hex[:8]}"
     stok = f"ss2gd_{uuid.uuid4().hex[:8]}_sess"
-    if DEBUG: print("[portal] call ScreenCast.CreateSession")
     res = await _call_with_handle(
         bus, IF_SC, "CreateSession", "a{sv}",
         [{
@@ -109,28 +105,40 @@ async def start_screencast_session(multiple: bool = True, cursor_mode: int = 2) 
         raise RuntimeError("ScreenCast.CreateSession returned no session_handle")
     session_path = sess
 
-    # ---- SelectSources ----
-    if DEBUG: print("[portal] call ScreenCast.SelectSources")
+    # SelectSources
     sel_tok = f"ss2gd_{uuid.uuid4().hex[:8]}"
-    await _call_with_handle(
-        bus, IF_SC, "SelectSources", "oa{sv}",
-        [session_path, {
-            "handle_token": Variant("s", sel_tok),
-            "types":        Variant("u", 1),                 # 1 = MONITOR
-            "multiple":     Variant("b", bool(multiple)),
-            "cursor_mode":  Variant("u", int(cursor_mode)),  # 2 = Embedded
-        }]
-    )
+    opts: Dict[str, Variant] = {
+        "handle_token": Variant("s", sel_tok),
+        "types":        Variant("u", 1),                 # 1=MONITOR
+        "multiple":     Variant("b", bool(multiple)),
+        "cursor_mode":  Variant("u", int(cursor_mode)),  # 2=Embedded
+        "persist_mode": Variant("u", 1),                 # restorable
+        "audio":        Variant("b", True),              # ★ 音声の共有も要求
+    }
+    if restore_token:
+        opts["restore_token"] = Variant("s", restore_token)
 
-    # ---- Start ----
-    if DEBUG: print("[portal] call ScreenCast.Start")
+    await _call_with_handle(bus, IF_SC, "SelectSources", "oa{sv}", [session_path, opts])
+
+    # Start
     start_tok = f"ss2gd_{uuid.uuid4().hex[:8]}"
-    res2 = await _call_with_handle(
-        bus, IF_SC, "Start", "osa{sv}",
-        [session_path, "", {"handle_token": Variant("s", start_tok)}]
-    )
+    res2 = await _call_with_handle(bus, IF_SC, "Start", "osa{sv}", [session_path, "", {"handle_token": Variant("s", start_tok)}])
 
-    # streams: a(ua{sv}) or a(oa{sv})
+    # save restore token（あれば）
+    token = _v(res2.get("restore_token")) or _v(res2.get("persist_token"))
+    if isinstance(token, str) and token:
+        try:
+            from .config import load_settings, save_settings
+            st = load_settings()
+            st["screencast_restore_token"] = token
+            save_settings(st)
+            if DEBUG:
+                print(f"[portal] saved restore_token ({len(token)} chars)")
+        except Exception as e:
+            if DEBUG:
+                print(f"[portal] save token failed: {e}")
+
+    # streams
     raw_streams = res2.get("streams")
     streams_py = _deep_unvariant(raw_streams)
     if DEBUG:
@@ -144,23 +152,19 @@ async def start_screencast_session(multiple: bool = True, cursor_mode: int = 2) 
             first, props = item[0], item[1] if isinstance(item[1], dict) else {}
             obj_path = None
             node_id = None
-
             if isinstance(first, int):
-                node_id = first                   # a(ua{sv})
+                node_id = first
             elif isinstance(first, str):
-                obj_path = first                   # a(oa{sv})
+                obj_path = first
                 node_id = props.get("node_id") or props.get("node-id") or props.get("pipewire_node_id")
-
             try:
                 if node_id is not None:
                     node_id = int(node_id)
             except Exception:
                 pass
-
             pos  = props.get("position")
             size = props.get("size")
             styp = props.get("source_type") or props.get("source-type")
-
             streams.append({
                 "node_id": node_id,
                 "object_path": obj_path,
@@ -175,16 +179,12 @@ async def start_screencast_session(multiple: bool = True, cursor_mode: int = 2) 
     if not streams or streams[0].get("node_id") is None:
         raise RuntimeError("ScreenCast.Start: no usable node_id in streams")
 
-    # ---- OpenPipeWireRemote ----
-    if DEBUG: print("[portal] call ScreenCast.OpenPipeWireRemote")
+    # OpenPipeWireRemote
     msg = Message(destination=PORTAL, path=OBJ, interface=IF_SC, member="OpenPipeWireRemote",
                   signature="oa{sv}", body=[session_path, {}])
-    # 応答待ちで固まる環境への対策としてタイムアウト
     r = await asyncio.wait_for(bus.call(msg), timeout=10.0)
-
     if r.message_type != MessageType.METHOD_RETURN:
         raise RuntimeError(f"OpenPipeWireRemote failed: {r.error_name}")
-
     if not r.unix_fds:
         raise RuntimeError("OpenPipeWireRemote returned no fd")
     fd = os.dup(r.unix_fds[0])

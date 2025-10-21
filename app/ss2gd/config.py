@@ -50,3 +50,20 @@ def load_embedded_client_config() -> dict | None:
     今は None を返して通常パスを使わせる。
     """
     return None
+
+# ---- ScreenCast restore token helpers ----
+
+def get_screencast_restore_token() -> str | None:
+    """保存済みの ScreenCast restore_token（無ければ None）"""
+    try:
+        st = load_settings()
+        tok = st.get("screencast_restore_token")
+        return tok if isinstance(tok, str) and tok else None
+    except Exception:
+        return None
+
+def set_screencast_restore_token(token: str) -> None:
+    """必要なら手動で更新（通常はポータル応答で自動保存される）"""
+    st = load_settings()
+    st["screencast_restore_token"] = token
+    save_settings(st)

@@ -3,7 +3,7 @@ import os, sys, json, time, signal, shlex, subprocess, threading
 from typing import Optional, Tuple, Dict, Any, List
 
 from .screencast_portal import start_screencast_session
-from .config import ensure_videos_dir
+from .config import ensure_videos_dir, get_screencast_restore_token, load_settings
 from .drive_uploader import upload_and_share
 from .clipboard import copy_to_clipboard
 from .notify import notify
@@ -33,9 +33,46 @@ def _clear_state() -> None:
     except Exception: pass
 
 # ------ audio detection ------
+def _list_sources() -> List[str]:
+    try:
+        r = subprocess.run(["pactl", "list", "short", "sources"],
+                           capture_output=True, text=True, check=False)
+        out = []
+        for ln in r.stdout.splitlines():
+            cols = ln.split()
+            if len(cols) >= 2:
+                out.append(cols[1])
+        return out
+    except Exception as e:
+        _dbg(f"pactl list sources failed: {e}")
+        return []
+
 def _detect_monitor_source() -> Optional[str]:
+    # 1) 環境変数が最優先
     env = os.environ.get("SS2GD_AUDIO_MONITOR")
-    if env: _dbg(f"audio monitor from env: {env}"); return env
+    if env:
+        _dbg(f"audio monitor from env: {env}")
+        return env
+
+    # 2) 設定（audio.mode: auto | none | device）
+    st = load_settings() or {}
+    audio = st.get("audio") or {}
+    mode = (audio.get("mode") or "auto").lower().strip()
+
+    if mode == "none":
+        _dbg("audio mode: none")
+        return None
+
+    if mode == "device":
+        # ★ ユーザー指定を厳密に優先（列挙一致チェックで落とさない）
+        dev = (audio.get("device") or "").strip()
+        if dev:
+            _dbg(f"audio mode: device -> {dev}")
+            return dev
+        _dbg("audio mode: device but no device specified")
+        return None
+
+    # 3) 自動（Default Sink の .monitor → 無ければ最初の monitor）
     try:
         r = subprocess.run(["pactl","info"], capture_output=True, text=True, check=False)
         sink = None
@@ -43,12 +80,15 @@ def _detect_monitor_source() -> Optional[str]:
             if "Default Sink:" in line:
                 sink = line.split(":",1)[1].strip(); break
         if sink:
-            cand = sink + ".monitor"; _dbg(f"audio monitor from default sink: {cand}"); return cand
+            cand = sink + ".monitor"
+            _dbg(f"audio monitor from default sink: {cand}")
+            return cand
         r2 = subprocess.run(["pactl","list","short","sources"], capture_output=True, text=True, check=False)
         for ln in r2.stdout.splitlines():
             cols = ln.split()
             if len(cols) >= 2 and "monitor" in cols[1]:
-                _dbg(f"audio monitor from sources: {cols[1]}"); return cols[1]
+                _dbg(f"audio monitor from sources: {cols[1]}")
+                return cols[1]
     except Exception as e:
         _dbg(f"pactl detect failed: {e}")
     return None
@@ -95,7 +135,8 @@ def start_recording(*, fps: int = 30, rect: Tuple[int,int,int,int]) -> str:
         raise ValueError("rect is required: (x,y,w,h)")
 
     _dbg("start_screencast_session()")
-    fd, streams, _ = asyncio_run(start_screencast_session())
+    restore = get_screencast_restore_token()
+    fd, streams, _ = asyncio_run(start_screencast_session(restore_token=restore))
     if not streams: raise RuntimeError("screencast: no streams")
     s = streams[0]
     node_id = int(s["node_id"])
@@ -113,6 +154,8 @@ def start_recording(*, fps: int = 30, rect: Tuple[int,int,int,int]) -> str:
     os.close(fd)
 
     audio_dev = _detect_monitor_source()
+    _dbg(f"audio device resolved: {audio_dev!r}")
+
     args = _build_gst_args(fd_child, node_id, crop, fps, out_path, audio_dev)
     _dbg("launch gst-launch-1.0")
     p = subprocess.Popen(args, pass_fds=(fd_child,), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
