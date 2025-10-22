@@ -1,5 +1,5 @@
 # app/ss2gd/cli.py
-import os, sys, argparse, webbrowser
+import os, sys, argparse, webbrowser, time
 
 from .screenshot_portal import take_interactive_screenshot, PortalError
 from .drive_uploader import upload_and_share, sign_in
@@ -15,11 +15,17 @@ def cmd_shot():
     """矩形スクショ → Drive アップロード → クリップボード & ブラウザ"""
     _debug("take_interactive_screenshot()")
     try:
-        # ここは同期関数（asyncio.run不要）
+        # attempt 1
         path = take_interactive_screenshot()
-    except PortalError as e:
-        print(f"Screenshot failed: {e}", file=sys.stderr)
-        sys.exit(1)
+    except PortalError as e1:
+        _debug(f"portal error attempt1: {e1}")
+        # 短い待ちを挟んで attempt 2
+        time.sleep(float(os.environ.get("SS2GD_SHOT_RETRY_DELAY", "0.6")))
+        try:
+            path = take_interactive_screenshot()
+        except PortalError as e2:
+            print(f"Screenshot failed: {e2}", file=sys.stderr)
+            sys.exit(1)
 
     # 拡張子からMIME推定（設定ダイアログのformatとも整合）
     mime = "image/png"
@@ -105,7 +111,7 @@ def main():
     p_rec.add_argument("--duration", type=int, default=5)
     p_rec.add_argument("--fps", type=int, default=30)
 
-    # ★ 追加: 録画UI
+    # ★ 録画UI
     sub.add_parser("record-ui")
 
     a = p.parse_args()

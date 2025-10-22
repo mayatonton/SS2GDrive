@@ -31,6 +31,7 @@ async def _add_match(bus: MessageBus, rule: str) -> None:
         signature="s",
         body=[rule],
     )
+    # AddMatch 自体はタイムアウト不要だが、念のため軽く待ち合わせしておく
     await bus.call(msg)
 
 async def _wait_request_response(bus: MessageBus, handle: str, timeout: float) -> Tuple[int, Dict[str, Any]]:
@@ -63,14 +64,20 @@ async def _wait_request_response(bus: MessageBus, handle: str, timeout: float) -
 
 async def _call_with_handle(bus: MessageBus, interface: str, member: str, signature: str, body: list, timeout: float):
     msg = Message(destination=PORTAL, path=OBJ, interface=interface, member=member, signature=signature, body=body)
-    reply = await bus.call(msg)
+    try:
+        # ★ bus.call にもタイムアウト
+        reply = await asyncio.wait_for(bus.call(msg), timeout=timeout)
+    except asyncio.TimeoutError as te:
+        raise PortalError("Screenshot portal timeout") from te
     if reply.message_type != MessageType.METHOD_RETURN:
-        raise PortalError(reply.error_name)
+        # ここは DBus レベルのエラー名が入る（例: org.freedesktop.DBus.Error.InvalidArgs）
+        raise PortalError(reply.error_name or "Screenshot portal call failed")
     handle = reply.body[0]  # Request object path
     if DEBUG:
         print(f"[portal] request handle: {handle}")
     code, results = await _wait_request_response(bus, handle, timeout=timeout)
     if code != 0:
+        # ユーザーキャンセル含む非0コード
         raise PortalError("Screenshot canceled or denied by portal")
     return results
 
@@ -80,34 +87,41 @@ async def _do_screenshot() -> str:
     実装差吸収のため、まず 'sa{sv}'（parent_window + options）を試し、InvalidArgs なら 'a{sv}' にフォールバック。
     """
     bus = await MessageBus().connect()
-    await _add_match(bus, "type='signal',sender='org.freedesktop.portal.Desktop',interface='org.freedesktop.portal.Request'")
-
-    token = f"ss2gd_{os.getpid()}_{int(time.time())}"
-    opts = {
-        "handle_token": Variant("s", token),
-        "interactive":  Variant("b", True),
-        # "modal": Variant("b", True),  # 必要なら有効化
-    }
-
-    # 1) 推奨：parent_window を空文字で渡す ('sa{sv}')
-    if DEBUG:
-        print("[portal] call Screenshot.Screenshot (sa{sv})")
     try:
-        res = await _call_with_handle(bus, IF_SS, "Screenshot", "sa{sv}", ["", opts], timeout=DEFAULT_TIMEOUT)
-    except PortalError as e:
-        if "InvalidArgs" not in str(e):
-            raise
-        # 2) 旧挙動：options のみ ('a{sv}')
-        if DEBUG:
-            print("[portal] call Screenshot.Screenshot (a{sv}) fallback")
-        res = await _call_with_handle(bus, IF_SS, "Screenshot", "a{sv}", [opts], timeout=DEFAULT_TIMEOUT)
+        await _add_match(bus, "type='signal',sender='org.freedesktop.portal.Desktop',interface='org.freedesktop.portal.Request'")
 
-    uri = _v(res.get("uri"))
-    if DEBUG:
-        print(f"[portal] uri: {uri!r}")
-    if not uri or not isinstance(uri, str):
-        raise PortalError("Portal returned no uri")
-    return uri
+        token = f"ss2gd_{os.getpid()}_{int(time.time())}"
+        opts = {
+            "handle_token": Variant("s", token),
+            "interactive":  Variant("b", True),
+            # "modal": Variant("b", True),  # 必要なら有効化
+        }
+
+        # 1) 推奨：parent_window を空文字で渡す ('sa{sv}')
+        if DEBUG:
+            print("[portal] call Screenshot.Screenshot (sa{sv})")
+        try:
+            res = await _call_with_handle(bus, IF_SS, "Screenshot", "sa{sv}", ["", opts], timeout=DEFAULT_TIMEOUT)
+        except PortalError as e:
+            # “InvalidArgs” がエラー名で来た場合のみ a{sv} にフォールバック
+            if "InvalidArgs" not in str(e):
+                raise
+            if DEBUG:
+                print("[portal] call Screenshot.Screenshot (a{sv}) fallback")
+            res = await _call_with_handle(bus, IF_SS, "Screenshot", "a{sv}", [opts], timeout=DEFAULT_TIMEOUT)
+
+        uri = _v(res.get("uri"))
+        if DEBUG:
+            print(f"[portal] uri: {uri!r}")
+        if not uri or not isinstance(uri, str):
+            raise PortalError("Portal returned no uri")
+        return uri
+    finally:
+        # ★ 使い捨てバス。必ず切断してリーク/ハングを避ける
+        try:
+            await bus.disconnect()
+        except Exception:
+            pass
 
 async def _copy_from_doc_portal_uri(uri: str) -> str:
     """

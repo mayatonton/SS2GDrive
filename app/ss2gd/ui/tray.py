@@ -1,14 +1,14 @@
-# app/ss2gd/ss2gd/ui/tray.py
+# app/ss2gd/ui/tray.py
 from __future__ import annotations
 
-import os, sys, time, asyncio, threading, webbrowser, shutil, subprocess
+import os, sys, time, threading, webbrowser, shutil, subprocess
 
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QWidget,
     QVBoxLayout, QLabel, QPushButton, QMessageBox
 )
 from PySide6.QtGui import QIcon, QDesktopServices
-from PySide6.QtCore import QTimer, QUrl, QObject, Signal, Slot, Qt  # ← Qt を追加
+from PySide6.QtCore import QTimer, QUrl, QObject, Signal, Slot, Qt
 
 from ..config import load_settings
 
@@ -20,7 +20,8 @@ except Exception:
     def _keep_clipboard_alive(ms: int = 1200) -> None:
         pass  # tray常駐では不要
 
-from ..screenshot_portal import take_interactive_screenshot
+# ★ PortalError を捕捉できるように import
+from ..screenshot_portal import take_interactive_screenshot, PortalError
 from ..drive_uploader import upload_and_share
 
 
@@ -54,6 +55,9 @@ class TrayApp:
         self.win: QWidget | None = None
         self._force_window = bool(force_window)
         self._invoker = _GuiInvoker()  # GUI スレッド所属
+
+        # ★ 多重実行ガード（Tray/Window共通）
+        self._shot_lock = threading.Lock()
 
         if not self._force_window and QSystemTrayIcon.isSystemTrayAvailable():
             self._make_tray()
@@ -128,7 +132,12 @@ class TrayApp:
         self._open_settings()
 
     def on_shot(self) -> None:
-        """Snap & Upload（UI非ブロッキング、失敗はダイアログ）"""
+        """Snap & Upload（UI非ブロッキング、失敗はダイアログ）。ポータル不調は1回だけ自動リトライ。"""
+        # ★ 多重起動防止（ボタンの有効/無効とは別レイヤ）
+        if not self._shot_lock.acquire(False):
+            _dbg("shot is already running; ignore")
+            return
+
         btn = getattr(self, "btn_shot", None)
         if btn:
             btn.setEnabled(False); btn.setText("Working…")
@@ -136,8 +145,17 @@ class TrayApp:
         def worker() -> None:
             link = None; err = None
             try:
-                _dbg("take_interactive_screenshot() start")
-                path = take_interactive_screenshot()
+                # 1回目
+                _dbg("take_interactive_screenshot() [attempt 1]")
+                try:
+                    path = take_interactive_screenshot()
+                except PortalError as e1:
+                    _dbg(f"portal error attempt1: {e1}")
+                    # 短い待ちを挟んで1回だけ再試行
+                    time.sleep(float(os.environ.get("SS2GD_SHOT_RETRY_DELAY", "0.6")))
+                    _dbg("take_interactive_screenshot() [attempt 2]")
+                    path = take_interactive_screenshot()
+
                 _dbg(f"screenshot path: {path!r}")
                 if not path or not os.path.exists(path):
                     raise RuntimeError("Screenshot canceled or not saved")
@@ -149,28 +167,31 @@ class TrayApp:
                 _dbg(f"uploaded: {link}")
             except Exception as e:
                 err = str(e); _dbg(f"error: {err}")
+            finally:
+                # GUIスレッドへディスパッチ
+                def finish() -> None:
+                    _dbg("finish() on GUI thread")
+                    if btn:
+                        btn.setEnabled(True); btn.setText("Snap & Upload")
+                    if link:
+                        try:
+                            copy_to_clipboard(link); _keep_clipboard_alive(2000)
+                        except Exception as e2:
+                            _dbg(f"clipboard err: {e2}")
+                        try:
+                            QDesktopServices.openUrl(QUrl(link))
+                        except Exception as e3:
+                            _dbg(f"QDesktopServices err: {e3}")
+                            try: webbrowser.open(link)
+                            except Exception as e4: _dbg(f"webbrowser err: {e4}")
+                    else:
+                        QMessageBox.critical(self.win if self.win else None, "SS2GDrive",
+                                             f"Snap & Upload failed:\n{err or 'unknown error'}")
+                    # ★ ロック解除
+                    try: self._shot_lock.release()
+                    except Exception: pass
 
-            def finish() -> None:
-                _dbg("finish() on GUI thread")
-                if btn:
-                    btn.setEnabled(True); btn.setText("Snap & Upload")
-                if link:
-                    try:
-                        copy_to_clipboard(link); _keep_clipboard_alive(2000)
-                    except Exception as e2:
-                        _dbg(f"clipboard err: {e2}")
-                    try:
-                        QDesktopServices.openUrl(QUrl(link))
-                    except Exception as e3:
-                        _dbg(f"QDesktopServices err: {e3}")
-                        try: webbrowser.open(link)
-                        except Exception as e4: _dbg(f"webbrowser err: {e4}")
-                else:
-                    QMessageBox.critical(self.win if self.win else None, "SS2GDrive",
-                                         f"Snap & Upload failed:\n{err or 'unknown error'}")
-
-            # GUIスレッドへディスパッチ
-            self._invoker.call_signal.emit(finish)
+                self._invoker.call_signal.emit(finish)
 
         threading.Thread(target=worker, daemon=True).start()
 
